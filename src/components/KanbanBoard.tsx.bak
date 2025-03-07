@@ -1,0 +1,704 @@
+import React, { useState, useEffect } from "react";
+import styled from "styled-components";
+import { DragDropContext, Droppable, Draggable, DropResult } from "react-beautiful-dnd";
+import { Link, useParams, useNavigate } from "react-router-dom";
+import { nanoid } from "nanoid";
+
+// Types for our Kanban board
+interface KanbanCard {
+  id: string;
+  content: string;
+}
+
+interface KanbanColumn {
+  id: string;
+  title: string;
+  cards: KanbanCard[];
+}
+
+// React 19 compatibility wrapper for Droppable
+const StrictModeDroppable = ({ children, ...props }: any) => {
+  const [enabled, setEnabled] = useState(false);
+
+  useEffect(() => {
+    // This is needed to ensure drag and drop works in React 19 strict mode
+    const animation = requestAnimationFrame(() => setEnabled(true));
+    return () => {
+      cancelAnimationFrame(animation);
+      setEnabled(false);
+    };
+  }, []);
+
+  if (!enabled) {
+    return null;
+  }
+
+  return (
+    <Droppable {...props}>
+      {(provided, snapshot) => children(provided, snapshot)}
+    </Droppable>
+  );
+};
+
+// Styled Components
+const Container = styled.div`
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background-color: var(--background-color);
+  color: var(--text-primary);
+`;
+
+const Header = styled.header`
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 2rem;
+  background-color: var(--surface-color);
+  border-bottom: 1px solid var(--border-color);
+  box-shadow: var(--elevation-1);
+`;
+
+const AppLogo = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--primary-color);
+`;
+
+const Title = styled.h1`
+  font-size: 1.5rem;
+  margin: 0;
+  color: var(--text-primary);
+`;
+
+const HomeButton = styled(Link)`
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  padding: 0.5rem 1rem;
+  border-radius: var(--border-radius);
+  transition: all var(--transition-speed);
+  
+  &:hover {
+    background-color: var(--hover-overlay);
+    color: var(--primary-color);
+  }
+`;
+
+const ThemeToggle = styled.button`
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: 0.5rem;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-speed);
+  
+  &:hover {
+    background-color: var(--hover-overlay);
+  }
+`;
+
+const BoardContainer = styled.div`
+  display: flex;
+  overflow-x: auto;
+  padding: 1.5rem;
+  height: calc(100vh - 64px);
+  gap: 1rem;
+  
+  &::-webkit-scrollbar {
+    height: 10px;
+  }
+  
+  &::-webkit-scrollbar-track {
+    background: var(--background-color);
+  }
+  
+  &::-webkit-scrollbar-thumb {
+    background-color: var(--border-color);
+    border-radius: 10px;
+  }
+`;
+
+const ColumnContainer = styled.div<{ $isDragging?: boolean; $isDraggingOver?: boolean }>`
+  width: 280px;
+  min-width: 280px;
+  background-color: ${props => 
+    props.$isDragging 
+      ? 'var(--primary-color-light)' 
+      : props.$isDraggingOver 
+        ? 'var(--hover-overlay)' 
+        : 'var(--surface-color)'};
+  border-radius: var(--border-radius);
+  box-shadow: ${props => props.$isDragging ? 'var(--elevation-3)' : 'var(--elevation-1)'};
+  display: flex;
+  flex-direction: column;
+  margin: 0 0.5rem;
+  max-height: 100%;
+  transition: background-color var(--transition-speed), box-shadow var(--transition-speed);
+  border-left: ${props => props.$isDragging ? '3px solid var(--primary-color)' : 'none'};
+`;
+
+const ColumnHeader = styled.div<{ $isDragging?: boolean }>`
+  padding: 1rem;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background-color: ${props => props.$isDragging ? 'var(--primary-color-light)' : 'transparent'};
+  cursor: grab;
+`;
+
+const ColumnTitle = styled.h2`
+  margin: 0;
+  font-size: 1rem;
+  color: var(--text-primary);
+`;
+
+const CardList = styled.div`
+  padding: 1rem;
+  flex-grow: 1;
+  overflow-y: auto;
+  
+  &::-webkit-scrollbar {
+    width: 8px;
+  }
+  
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  
+  &::-webkit-scrollbar-thumb {
+    background-color: var(--border-color);
+    border-radius: 4px;
+  }
+`;
+
+const CardItem = styled.div<{ $isDragging: boolean }>`
+  padding: 1rem;
+  background-color: var(--background-color);
+  border-radius: var(--border-radius);
+  margin-bottom: 0.75rem;
+  box-shadow: ${props => props.$isDragging ? 'var(--elevation-3)' : 'var(--elevation-1)'};
+  border-left: ${props => props.$isDragging ? '3px solid var(--primary-color)' : '1px solid var(--border-color)'};
+  transition: all var(--transition-speed);
+  
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--elevation-2);
+  }
+`;
+
+const AddCardButton = styled.button`
+  background-color: transparent;
+  border: 1px dashed var(--border-color);
+  color: var(--text-secondary);
+  width: 100%;
+  padding: 0.75rem;
+  border-radius: var(--border-radius);
+  cursor: pointer;
+  margin-top: 0.5rem;
+  transition: all var(--transition-speed);
+  
+  &:hover {
+    background-color: var(--hover-overlay);
+    color: var(--primary-color);
+  }
+`;
+
+const AddColumnButton = styled.button`
+  background-color: var(--surface-color);
+  border: 1px dashed var(--border-color);
+  color: var(--text-secondary);
+  min-width: 280px;
+  max-width: 280px;
+  height: 80px;
+  border-radius: var(--border-radius);
+  cursor: pointer;
+  margin: 0 0.5rem;
+  transition: all var(--transition-speed);
+  
+  &:hover {
+    background-color: var(--hover-overlay);
+    color: var(--primary-color);
+  }
+`;
+
+const CardInput = styled.textarea`
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+  background-color: var(--background-color);
+  color: var(--text-primary);
+  font-family: inherit;
+  resize: vertical;
+  min-height: 80px;
+  margin-bottom: 0.5rem;
+  
+  &:focus {
+    outline: none;
+    border-color: var(--primary-color);
+  }
+`;
+
+const ButtonGroup = styled.div`
+  display: flex;
+  gap: 0.5rem;
+`;
+
+const Button = styled.button<{ $primary?: boolean }>`
+  padding: 0.5rem 1rem;
+  border-radius: var(--border-radius);
+  border: none;
+  background-color: ${props => props.$primary ? 'var(--primary-color)' : 'var(--surface-color)'};
+  color: ${props => props.$primary ? 'white' : 'var(--text-primary)'};
+  cursor: pointer;
+  font-weight: 500;
+  transition: all var(--transition-speed);
+  
+  &:hover {
+    background-color: ${props => props.$primary ? 'var(--primary-color-dark)' : 'var(--hover-overlay)'};
+  }
+`;
+
+// Add Modal components for board naming and sharing
+const Modal = styled.div`
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+`;
+
+const ModalContent = styled.div`
+  background-color: var(--surface-color);
+  border-radius: var(--border-radius);
+  padding: 2rem;
+  width: 90%;
+  max-width: 500px;
+  box-shadow: var(--elevation-3);
+`;
+
+const ModalTitle = styled.h2`
+  margin-top: 0;
+  margin-bottom: 1rem;
+  color: var(--text-primary);
+`;
+
+const InputField = styled.input`
+  width: 100%;
+  padding: 0.75rem;
+  margin: 0.5rem 0 1rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+  background-color: var(--background-color);
+  color: var(--text-primary);
+  font-family: inherit;
+  
+  &:focus {
+    outline: none;
+    border-color: var(--primary-color);
+  }
+`;
+
+const LinkContainer = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background-color: var(--background-color);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+  padding: 0.5rem 1rem;
+  margin: 0.5rem 0 1rem;
+  word-break: break-all;
+  font-size: 0.9rem;
+`;
+
+const CopyButton = styled.button`
+  background-color: var(--primary-color);
+  color: white;
+  border: none;
+  border-radius: var(--border-radius);
+  padding: 0.5rem 1rem;
+  margin-left: 0.5rem;
+  cursor: pointer;
+  white-space: nowrap;
+  font-weight: 500;
+  
+  &:hover {
+    background-color: var(--primary-color-dark);
+  }
+  
+  &.success {
+    background-color: var(--success-color);
+  }
+`;
+
+// Add a column naming modal
+const ColumnModal = styled(Modal)``;
+
+const ColumnModalContent = styled(ModalContent)`
+  max-width: 400px;
+`;
+
+// Confirmation modal for column movement
+const ConfirmationModal = styled(Modal)``;
+
+const ConfirmationModalContent = styled(ModalContent)`
+  max-width: 400px;
+`;
+
+// Icons
+const HomeIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M9 20V14H15V20H19V12H22L12 3L2 12H5V20H9Z" fill="currentColor" />
+  </svg>
+);
+
+const KanbanIcon = () => (
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="3" y="3" width="7" height="9" rx="1" fill="currentColor"/>
+    <rect x="14" y="3" width="7" height="5" rx="1" fill="currentColor"/>
+    <rect x="14" y="12" width="7" height="9" rx="1" fill="currentColor"/>
+    <rect x="3" y="16" width="7" height="5" rx="1" fill="currentColor"/>
+  </svg>
+);
+
+// Initial data check and loading
+const loadBoardData = (boardId: string | undefined) => {
+  if (!boardId) return initialData;
+  
+  try {
+    const savedData = localStorage.getItem(`kanban-board-${boardId}`);
+    if (savedData) {
+      return JSON.parse(savedData);
+    }
+  } catch (error) {
+    console.error("Error loading board data:", error);
+  }
+  
+  return initialData;
+};
+
+// Sample initial data
+const initialData: KanbanColumn[] = [
+  {
+    id: 'column-1',
+    title: 'To Do',
+    cards: [
+      { id: 'card-1', content: 'Create project structure' },
+      { id: 'card-2', content: 'Design UI components' },
+      { id: 'card-3', content: 'Set up development environment' }
+    ]
+  },
+  {
+    id: 'column-2',
+    title: 'In Progress',
+    cards: [
+      { id: 'card-4', content: 'Implement authentication' },
+      { id: 'card-5', content: 'Build dashboard layout' }
+    ]
+  },
+  {
+    id: 'column-3',
+    title: 'Done',
+    cards: [
+      { id: 'card-6', content: 'Project planning' },
+      { id: 'card-7', content: 'Requirements gathering' }
+    ]
+  }
+];
+
+// Main Component
+const KanbanBoard: React.FC = () => {
+  const { boardId } = useParams<{ boardId?: string }>();
+  const navigate = useNavigate();
+  const [columns, setColumns] = useState<KanbanColumn[]>(() => loadBoardData(boardId));
+  const [isDarkMode, setIsDarkMode] = useState(false);
+  const [addingCardToColumnId, setAddingCardToColumnId] = useState<string | null>(null);
+  const [newCardContent, setNewCardContent] = useState('');
+  const [isModalOpen, setIsModalOpen] = useState(!boardId);
+  const [boardLink, setBoardLink] = useState('');
+  const [boardName, setBoardName] = useState('My Kanban Board');
+  const [copySuccess, setCopySuccess] = useState(false);
+  const [isAddingColumn, setIsAddingColumn] = useState(false);
+  const [newColumnTitle, setNewColumnTitle] = useState('');
+  const [pendingMove, setPendingMove] = useState<{
+    source: any;
+    destination: any;
+    draggableId: string;
+  } | null>(null);
+  const [showMoveConfirmation, setShowMoveConfirmation] = useState(false);
+
+  // Load theme preference and board name from localStorage on initial render
+  useEffect(() => {
+    const savedTheme = localStorage.getItem('theme');
+    if (savedTheme === 'dark') {
+      setIsDarkMode(true);
+      document.documentElement.setAttribute('data-theme', 'dark');
+    } else {
+      document.documentElement.setAttribute('data-theme', 'light');
+    }
+    
+    // If board ID exists, load the board name
+    if (boardId) {
+      const savedBoardName = localStorage.getItem(`kanban-name-${boardId}`);
+      if (savedBoardName) {
+        setBoardName(savedBoardName);
+      }
+      
+      // Set board link for sharing
+      const link = `${window.location.origin}/kanban-board/${boardId}`;
+      setBoardLink(link);
+    } else if (!isModalOpen) {
+      // If no board ID and modal is closed, open the modal
+      setIsModalOpen(true);
+      
+      // Generate a new board link if there's none
+      if (!boardLink) {
+        const newBoardId = nanoid(10);
+        const link = `${window.location.origin}/kanban-board/${newBoardId}`;
+        setBoardLink(link);
+      }
+    }
+  }, [boardId, isModalOpen, boardLink]);
+
+  // Save board data whenever it changes
+  useEffect(() => {
+    if (boardId) {
+      localStorage.setItem(`kanban-board-${boardId}`, JSON.stringify(columns));
+    }
+  }, [columns, boardId]);
+
+  // Toggle between dark and light mode
+  const toggleTheme = () => {
+    setIsDarkMode(!isDarkMode);
+    const newTheme = !isDarkMode ? 'dark' : 'light';
+    localStorage.setItem('theme', newTheme);
+    document.documentElement.setAttribute('data-theme', newTheme);
+  };
+
+  const createNewBoard = () => {
+    const newBoardId = nanoid(10);
+    const link = `${window.location.origin}/kanban-board/${newBoardId}`;
+    setBoardLink(link);
+    setIsModalOpen(true);
+  };
+
+  const copyToClipboard = () => {
+    try {
+      navigator.clipboard.writeText(boardLink);
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy link: ', err);
+      
+      // Fallback method
+      const textarea = document.createElement('textarea');
+      textarea.value = boardLink;
+      textarea.style.position = 'fixed';
+      textarea.style.left = '-999999px';
+      textarea.style.top = '-999999px';
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+      
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000);
+    }
+  };
+
+  const redirectToBoard = () => {
+    if (!boardLink) {
+      // Generate a new board ID if there's no link
+      const newBoardId = nanoid(10);
+      
+      // Store board name in localStorage
+      localStorage.setItem(`kanban-name-${newBoardId}`, boardName.trim());
+      
+      // Save initial board data
+      localStorage.setItem(`kanban-board-${newBoardId}`, JSON.stringify(columns));
+      
+      // Navigate to the board
+      navigate(`/kanban-board/${newBoardId}`);
+    } else {
+      // Extract board ID from link
+      const newBoardId = boardLink.split('/').pop();
+      
+      // Store board name in localStorage
+      if (newBoardId && boardName.trim()) {
+        localStorage.setItem(`kanban-name-${newBoardId}`, boardName.trim());
+        
+        // Save initial board data
+        localStorage.setItem(`kanban-board-${newBoardId}`, JSON.stringify(columns));
+      }
+      
+      // Navigate to the board
+      navigate(`/kanban-board/${newBoardId}`);
+    }
+    
+    // Close the modal
+    setIsModalOpen(false);
+  };
+
+  // Handle drag and drop
+  const onDragEnd = (result: DropResult) => {
+    const { destination, source, draggableId, type } = result;
+
+    // If there's no destination or if the item is dropped back where it started
+    if (!destination || (destination.droppableId === source.droppableId && destination.index === source.index)) {
+      return;
+    }
+
+    // For column movement, ask for confirmation
+    if (type === 'COLUMN') {
+      setPendingMove({
+        source,
+        destination,
+        draggableId
+      });
+      setShowMoveConfirmation(true);
+      return;
+    }
+
+    // Handle card movement (no confirmation needed)
+    moveCard(source, destination, draggableId);
+  };
+
+  // Confirm column movement
+  const confirmColumnMove = () => {
+    if (!pendingMove) return;
+    
+    const { source, destination, draggableId } = pendingMove;
+    
+    // Perform the column reordering
+    const newColumnOrder = Array.from(columns);
+    const movedColumn = newColumnOrder.splice(source.index, 1)[0];
+    newColumnOrder.splice(destination.index, 0, movedColumn);
+    
+    setColumns(newColumnOrder);
+    
+    // Reset pendingMove and close confirmation dialog
+    setPendingMove(null);
+    setShowMoveConfirmation(false);
+  };
+
+  // Cancel column movement
+  const cancelColumnMove = () => {
+    setPendingMove(null);
+    setShowMoveConfirmation(false);
+  };
+
+  // Handle card movement (extracted from onDragEnd)
+  const moveCard = (source: any, destination: any, draggableId: string) => {
+    const sourceColumnIndex = columns.findIndex(col => col.id === source.droppableId);
+    const destColumnIndex = columns.findIndex(col => col.id === destination.droppableId);
+    
+    if (sourceColumnIndex === -1 || destColumnIndex === -1) return;
+    
+    // Make a copy of our columns
+    const newColumns = [...columns];
+    
+    // Find the card
+    const card = newColumns[sourceColumnIndex].cards.find(card => card.id === draggableId);
+    if (!card) return;
+    
+    // Remove card from source column
+    newColumns[sourceColumnIndex].cards = newColumns[sourceColumnIndex].cards.filter(
+      card => card.id !== draggableId
+    );
+    
+    // Add card to destination column
+    newColumns[destColumnIndex].cards.splice(destination.index, 0, card);
+    
+    // Update state
+    setColumns(newColumns);
+  };
+
+  // Add a new card to a column
+  const startAddingCard = (columnId: string) => {
+    setAddingCardToColumnId(columnId);
+    setNewCardContent('');
+  };
+
+  const cancelAddingCard = () => {
+    setAddingCardToColumnId(null);
+    setNewCardContent('');
+  };
+
+  const confirmAddCard = () => {
+    if (!addingCardToColumnId || !newCardContent.trim()) {
+      cancelAddingCard();
+      return;
+    }
+
+    const newCard: KanbanCard = {
+      id: `card-${nanoid()}`,
+      content: newCardContent.trim()
+    };
+
+    const newColumns = columns.map(column => {
+      if (column.id === addingCardToColumnId) {
+        return {
+          ...column,
+          cards: [...column.cards, newCard]
+        };
+      }
+      return column;
+    });
+
+    setColumns(newColumns);
+    cancelAddingCard();
+  };
+
+  // Add a new column with custom name
+  const startAddingColumn = () => {
+    setIsAddingColumn(true);
+    setNewColumnTitle('');
+  };
+
+  const cancelAddingColumn = () => {
+    setIsAddingColumn(false);
+    setNewColumnTitle('');
+  };
+
+  const confirmAddColumn = () => {
+    if (!newColumnTitle.trim()) {
+      cancelAddingColumn();
+      return;
+    }
+
+    const newColumn: KanbanColumn = {
+      id: `column-${nanoid()}`,
+      title: newColumnTitle.trim(),
+      cards: []
+    };
+
+    const newColumns = [...columns, newColumn];
+    setColumns(newColumns);
+    cancelAddingColumn();
+  };
+
+  return (
+    <div>
+      {/* Rest of the component content */}
+    </div>
+  );
+};
+
+export default KanbanBoard;
